@@ -15,6 +15,7 @@ long lastEncoderCount = 0;
 float rpm = 0.0;
 
 void setup() {
+  delay(2000);
   Serial.begin(115200);
   pinMode(ENA_PIN, OUTPUT);
   pinMode(IN1_PIN, OUTPUT);
