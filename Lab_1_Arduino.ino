@@ -12,7 +12,7 @@ uint16_t vout_buf[ADC_BUF_LEN];
 void compute_pp(uint16_t *buf, int len, float *vpp)
 {
   uint16_t minv = 65535, maxv = 0;
-  for(int i=0; i<len; i++) {
+  for(int i = 0; i < len; i++) {
     if(buf[i] < minv) minv = buf[i];
     if(buf[i] > maxv) maxv = buf[i];
   }
@@ -22,29 +22,37 @@ void compute_pp(uint16_t *buf, int len, float *vpp)
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("f_hz, Vin_pp_V, Vout_pp_V, gain, gain_dB");
+  Serial.println("f_hz, time_s, Vin_pp_V, Vout_pp_V, gain, gain_dB");
 }
 
 void loop()
 {
-  delay(SETTLE_MS); // wait for circuit to settle at new frequency (you change freq manually)
-  for(int i=0;i<ADC_BUF_LEN;i++)
+  static unsigned long lastPrint = 0;
+  static int manual_freq = 100; // CHANGE THIS VALUE AS YOU ADJUST THE SINE INPUT FREQUENCY
+  delay(SETTLE_MS); // Wait for settling
+
+  // Acquire
+  for(int i = 0; i < ADC_BUF_LEN; i++)
   {
     vout_buf[i] = analogRead(VOUT_PIN);
     vin_buf[i]  = analogRead(VIN_PIN);
   }
+
+  // Process
   float vout_pp, vin_pp;
   compute_pp(vout_buf, ADC_BUF_LEN, &vout_pp);
   compute_pp(vin_buf, ADC_BUF_LEN, &vin_pp);
-  float gain = vout_pp / vin_pp;
-  float gain_db = 20 * log10(gain);
-  Serial.print("100, "); // Fill in actual frequency manually after capturing
-  Serial.print(vin_pp,4);
-  Serial.print(", ");
-  Serial.print(vout_pp,4);
-  Serial.print(", ");
-  Serial.print(gain,4);
-  Serial.print(", ");
-  Serial.println(gain_db,2);
-  delay(1000); // Repeat every second; or change as needed
+  float gain = (vin_pp > 1e-6) ? (vout_pp / vin_pp) : 0.0;
+  float gain_db = (gain > 1e-9) ? (20 * log10(gain)) : -999.0;
+  float elapsed_time = millis() / 1000.0;
+
+  // CSV Output
+  Serial.print(manual_freq); Serial.print(", ");
+  Serial.print(elapsed_time, 2); Serial.print(", ");
+  Serial.print(vin_pp, 4); Serial.print(", ");
+  Serial.print(vout_pp, 4); Serial.print(", ");
+  Serial.print(gain, 4); Serial.print(", ");
+  Serial.println(gain_db, 2);
+
+  delay(1000); // Print every second (adjust as needed)
 }
