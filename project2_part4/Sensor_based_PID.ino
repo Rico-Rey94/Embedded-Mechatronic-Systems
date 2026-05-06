@@ -1,0 +1,150 @@
+const int ENB_PIN = 5;
+const int IN3_PIN = 8;
+const int IN4_PIN = 9;
+const int ENCODER_A_PIN = 2;
+const int ENCODER_B_PIN = 3;
+
+// Change this to match your encoder
+const float PULSES_PER_REV = 360.0;
+
+// Encoder count
+volatile long encoderCount = 0;
+
+// Timing
+const unsigned long CONTROL_INTERVAL_MS = 100;
+unsigned long lastControlTime = 0;
+long lastEncoderCount = 0;
+
+// Measured speed
+float measuredRPM = 0.0;
+float filteredRPM = 0.0;
+const float RPM_FILTER_ALPHA = 0.9;
+
+// PID control
+float setpointRPM = 120.0;
+float Kp = 2.0;
+float Ki = 1.0;
+float Kd = 0.15;
+
+float error = 0.0;
+float prevError = 0.0;
+float integral = 0.0;
+float derivative = 0.0;
+float controlOutput = 0.0;
+int pwmCommand = 0;
+const float INTEGRAL_LIMIT = 100.0;
+
+// Set up pins and interrupts
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+  Serial.println("\n\n\n\n"); // Clear screen
+  pinMode(ENB_PIN, OUTPUT);
+  pinMode(IN3_PIN, OUTPUT);
+  pinMode(IN4_PIN, OUTPUT);
+  pinMode(ENCODER_A_PIN, INPUT_PULLUP);
+  pinMode(ENCODER_B_PIN, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(ENCODER_A_PIN), encoderISR, RISING);
+
+  stopMotor();
+  setMotorDirection(true);
+
+  lastControlTime = millis();
+
+  Serial.println("Closed-Loop Speed Control Started");
+  Serial.println("Setpoint RPM = 120");
+  Serial.println("Time(ms)\tSetpoint\tMeasuredRPM\tPWM\tError");
+}
+
+// Main control loop
+void loop() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastControlTime >= CONTROL_INTERVAL_MS) {
+    lastControlTime = currentTime;
+    updateRPM();
+    updatePID();
+    applyControl();
+    printStatus();
+  }
+}
+
+// Encoder interrupt routine for direction
+void encoderISR() {
+  int bState = digitalRead(ENCODER_B_PIN);
+  if (bState == HIGH) {
+    encoderCount++;
+  } else {
+    encoderCount--;
+  }
+}
+
+// Set motor rotation direction
+void setMotorDirection(bool forward) {
+  if (forward) {
+    digitalWrite(IN3_PIN, HIGH);
+    digitalWrite(IN4_PIN, LOW);
+  } else {
+    digitalWrite(IN3_PIN, LOW);
+    digitalWrite(IN4_PIN, HIGH);
+  }
+}
+
+// Set motor PWM value
+void setMotorPWM(int pwmValue) {
+  pwmValue = constrain(pwmValue, 0, 255);
+  analogWrite(ENB_PIN, pwmValue);
+}
+
+// Stop the motor
+void stopMotor() {
+  analogWrite(ENB_PIN, 0);
+  digitalWrite(IN3_PIN, LOW);
+  digitalWrite(IN4_PIN, LOW);
+}
+
+// Calculate measured RPM using encoder counts
+void updateRPM() {
+  noInterrupts();
+  long currentCount = encoderCount;
+  interrupts();
+  long deltaCount = currentCount - lastEncoderCount;
+  lastEncoderCount = currentCount;
+
+  float deltaTimeMinutes = CONTROL_INTERVAL_MS / 60000.0;
+  measuredRPM = ((float)deltaCount / PULSES_PER_REV) / deltaTimeMinutes;
+  measuredRPM = abs(measuredRPM);
+  filteredRPM = RPM_FILTER_ALPHA * filteredRPM + (1.0 - RPM_FILTER_ALPHA) * measuredRPM;
+}
+
+// PID closed-loop control logic
+void updatePID() {
+  float dt = CONTROL_INTERVAL_MS / 1000.0;
+  error = setpointRPM - filteredRPM;
+  integral += error * dt;
+  integral = constrain(integral, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
+  derivative = (error - prevError) / dt;
+  controlOutput = Kp * error + Ki * integral + Kd * derivative;
+  prevError = error;
+}
+
+// Apply control signal (PWM) to motor
+void applyControl() {
+  pwmCommand = (int)controlOutput;
+  pwmCommand = constrain(pwmCommand, 0, 255);
+  setMotorDirection(true);
+  setMotorPWM(pwmCommand);
+}
+
+// Print status for each control cycle
+void printStatus() {
+  Serial.print(millis());
+  Serial.print("\t\t");
+  Serial.print(setpointRPM);
+  Serial.print("\t\t");
+  Serial.print(filteredRPM);
+  Serial.print("\t\t");
+  Serial.print(pwmCommand);
+  Serial.print("\t");
+  Serial.println(error);
+}
