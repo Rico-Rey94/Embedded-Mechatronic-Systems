@@ -3,33 +3,45 @@ const int IN3_PIN = 8;
 const int IN4_PIN = 9;
 const int ENCODER_A_PIN = 2;
 const int ENCODER_B_PIN = 3;
+
 // Change this to match your encoder
 const float PULSES_PER_REV = 360.0;
+const float GEAR_RATIO = 34.0;
+const float PULSES_PER_REV = ENCODER_PULSES_PER_MOTOR_REV * GEAR_RATIO; // This gives pulses per output shaft rev
+
 // Encoder count
 volatile long encoderCount = 0;
+
 // RPM measurement timing
 const unsigned long CONTROL_INTERVAL_MS = 100;
 unsigned long lastControlTime = 0;
 long lastEncoderCount = 0;
+
 // Measured speed
 float measuredRPM = 0.0;
 float filteredRPM = 0.0;
+
 // Low-pass filter factor for RPM smoothing
 const float RPM_FILTER_ALPHA = 0.9;
+
 // Desired speed
 float setpointRPM = 120.0;
+
 // PID gains
 float Kp = 2.0;
 float Ki = 1.0;
 float Kd = 0.15;
+
 // PID variables
 float error = 0.0;
 float prevError = 0.0;
 float integral = 0.0;
 float derivative = 0.0;
 float controlOutput = 0.0;
+
 // PWM command
 int pwmCommand = 0;
+
 // Integral windup limit
 const float INTEGRAL_LIMIT = 100.0;
 void setup() {
