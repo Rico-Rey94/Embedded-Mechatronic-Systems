@@ -6,6 +6,8 @@ const int ENCODER_A_PIN = 2;
 const int ENCODER_B_PIN = 3;
 
 const float PULSES_PER_REV = 360.0;
+const float GEAR_RATIO = 34.0;
+const float PULSES_PER_REV = ENCODER_PULSES_PER_MOTOR_REV * GEAR_RATIO; // This gives pulses per output shaft rev
 volatile long encoderCount = 0;
 
 // For RPM calculation
