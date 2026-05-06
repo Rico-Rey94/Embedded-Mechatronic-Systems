@@ -59,7 +59,7 @@ void setup() {
  lastControlTime = millis();
  Serial.println("Step 3: Closed-Loop Speed Control Started");
  Serial.println("Setpoint RPM = 120");
- Serial.println("Time(ms)\tSetpoint\tMeasuredRPM\tPWM\tError");
+ Serial.println("Time(ms)\tSetpoint\tMeasuredRPM\tanalog PWM\tDutyCycle(%)\tError");
 }
 void loop() {
  unsigned long currentTime = millis();
@@ -135,6 +135,9 @@ void printStatus() {
  Serial.print(filteredRPM);
  Serial.print("\t\t");
  Serial.print(pwmCommand);
+ Serial.print("\t");
+ float dutyCycle = 100.0 * pwmCommand / 255.0;
+ Serial.print(dutyCycle, 1); // Print with 1 decimal place
  Serial.print("\t");
  Serial.println(error);
 }
