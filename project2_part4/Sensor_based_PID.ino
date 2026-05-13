@@ -9,17 +9,20 @@ const int IR_PIN          = 6;   // IR sensor OUT
 const int BUTTON_PIN      = 7;   // Push button
 const int LDR_PIN         = A0;  // LDR OUT
 const int TEMP_PIN        = A1;  // Temp sensor OUT
+
 // Encoder/motor configuration
 const float ENCODER_PULSES_PER_MOTOR_REV = 360.0;
 const float GEAR_RATIO = 34.0;
 const float PULSES_PER_REV = ENCODER_PULSES_PER_MOTOR_REV * GEAR_RATIO; // Output shaft
 const unsigned long CONTROL_INTERVAL_MS = 100;
+
 // PID Params
 float setpointRPM = 120.0;
 float Kp = 2.0;
 float Ki = 1.0;
 float Kd = 0.15;
 const float INTEGRAL_LIMIT = 100.0;
+
 volatile long encoderCount = 0;
 long lastEncoderCount = 0;
 unsigned long lastControlTime = 0;
@@ -28,18 +31,28 @@ float filteredRPM = 0.0;
 const float RPM_FILTER_ALPHA = 0.9;
 float error = 0.0, prevError = 0.0, integral = 0.0, derivative = 0.0, controlOutput = 0.0;
 int pwmCommand = 0;
+bool motorForward = true; // Track current direction
+
 // Button debouncing
 bool lastButtonState = HIGH, buttonState = HIGH;
 unsigned long lastDebounceTime = 0;
 const unsigned long DEBOUNCE_DELAY = 50;
+
 // Mode select
 int mode = 0; // 0 = speed control, 1 = sensor adaptive
+
 // Sensor thresholds (adjust for your hardware)
 const int OBSTACLE_DETECTED_STATE = LOW;
 const int LIGHT_LOW_THRESHOLD = 400;
 const int LIGHT_HIGH_THRESHOLD = 700;
 const float TEMP_WARNING_C = 35.0;
 const float TEMP_LIMIT_C = 45.0;
+
+// For reporting unmeasured/dummy fields:
+const float DUMMY_HUMIDITY = 0.0;
+const char DUMMY_DHT_STATUS[] = "OK";
+const int DUMMY_SELECTED_SENSOR = -1;
+const int DUMMY_LOGIC_ENABLED = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -71,7 +84,6 @@ void loop() {
   }
 }
 
-// Encoder interrupt routine for direction
 void encoderISR() {
   int bState = digitalRead(ENCODER_B_PIN);
   if (bState == HIGH) {
@@ -90,7 +102,6 @@ void updateButton() {
   if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
     if (reading != buttonState) {
       buttonState = reading;
-      // Active LOW
       if (buttonState == LOW) {
         mode++;
         if (mode > 1) mode = 0;
@@ -104,7 +115,6 @@ void updateButton() {
   lastButtonState = reading;
 }
 
-// Calculate measured RPM using encoder counts
 void updateRPM() {
   noInterrupts();
   long currentCount = encoderCount;
@@ -114,12 +124,11 @@ void updateRPM() {
   float deltaTimeMinutes = CONTROL_INTERVAL_MS / 60000.0;
   measuredRPM = ((float)deltaCount / PULSES_PER_REV) / deltaTimeMinutes;
   measuredRPM = abs(measuredRPM);
-  // FIX: use '*' for multiplication
   filteredRPM = RPM_FILTER_ALPHA * filteredRPM + (1.0 - RPM_FILTER_ALPHA) * measuredRPM;
 }
 
-// Set motor direction (true=forward, false=reverse)
 void setMotorDirection(bool forward) {
+  motorForward = forward;
   if (forward) {
     digitalWrite(IN3_PIN, HIGH);
     digitalWrite(IN4_PIN, LOW);
@@ -129,32 +138,27 @@ void setMotorDirection(bool forward) {
   }
 }
 
-// Set motor PWM value (0-255)
 void setMotorPWM(int pwmValue) {
   pwmValue = constrain(pwmValue, 0, 255);
   analogWrite(ENB_PIN, pwmValue);
 }
 
-// Stop the motor
 void stopMotor() {
   analogWrite(ENB_PIN, 0);
   digitalWrite(IN3_PIN, LOW);
   digitalWrite(IN4_PIN, LOW);
 }
 
-// Standard PID controller
 void updatePID() {
   float dt = CONTROL_INTERVAL_MS / 1000.0;
   error = setpointRPM - filteredRPM;
   integral += error * dt;
   integral = constrain(integral, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
   derivative = (error - prevError) / dt;
-  // FIX: use '*' for multiplication
   controlOutput = Kp * error + Ki * integral + Kd * derivative;
   prevError = error;
 }
 
-// --------------------------------
 // Mode 1: Speed Control (picture: maintain constant speed using encoder feedback)
 void runSpeedControlMode() {
   setpointRPM = 120.0; // fixed target speed
@@ -169,16 +173,12 @@ void runSpeedControlMode() {
   printStatus(ldrValue, obstacleDetected, tempC);
 }
 
-// --------------------------------
 // Mode 2: Sensor-Adaptive Mode 
 void runAdaptiveMode() {
   int ldrValue = analogRead(LDR_PIN);
   bool obstacleDetected = (digitalRead(IR_PIN) == OBSTACLE_DETECTED_STATE);
   float tempC = readTemperatureC();
-
   setpointRPM = 120.0; // default speed
-
-  // Light-based adaptation (low light -> reduce speed)
   if (ldrValue < LIGHT_LOW_THRESHOLD) {
     setpointRPM = 60.0;
   } else if (ldrValue > LIGHT_HIGH_THRESHOLD) {
@@ -186,27 +186,21 @@ void runAdaptiveMode() {
   } else {
     setpointRPM = 100.0;
   }
-
-  // Temperature adaptation (high temp -> limit output)
   if (tempC >= TEMP_WARNING_C && tempC < TEMP_LIMIT_C) {
     setpointRPM *= 0.7; // reduce speed if warning
   }
-  // critical temperature - stop motor
   if (tempC >= TEMP_LIMIT_C) {
     stopMotor();
     Serial.println("TEMP LIMIT EXCEEDED - MOTOR STOPPED");
     printStatus(ldrValue, obstacleDetected, tempC);
     return;
   }
-
-  // Obstacle detection (stop motor)
   if (obstacleDetected) {
     stopMotor();
     Serial.println("OBSTACLE DETECTED - MOTOR STOPPED");
     printStatus(ldrValue, obstacleDetected, tempC);
     return;
   }
-
   setMotorDirection(true);
   updatePID();
   pwmCommand = (int)controlOutput;
@@ -223,22 +217,40 @@ float readTemperatureC() {
   return tempC;
 }
 
-// Serial print all sensor data and states
+// ----- SERIAL OUTPUT COMPATIBLE WITH PYTHON GUI -----
+// THIS IS THE KEY FUNCTION TO SEND CSV DATA PER SAMPLE
 void printStatus(int ldrValue, bool obstacleDetected, float tempC) {
-  Serial.print("Mode: ");
-  Serial.print(mode);
-  Serial.print(" | Setpoint RPM: ");
-  Serial.print(setpointRPM);
-  Serial.print(" | Measured RPM: ");
-  Serial.print(filteredRPM);
-  Serial.print(" | PWM: ");
-  Serial.print(pwmCommand);
-  Serial.print(" | LDR: ");
-  Serial.print(ldrValue);
-  Serial.print(" | Temp C: ");
-  Serial.print(tempC);
-  Serial.print(" | Obstacle: ");
-  Serial.print(obstacleDetected ? "YES" : "NO");
-  Serial.print(" | Encoder Count: ");
-  Serial.println(encoderCount);
+  Serial.print("DATA,");
+  Serial.print(millis());                                // arduino_ms
+  Serial.print(",");
+  Serial.print(filteredRPM, 2);                          // rpm
+  Serial.print(",");
+  Serial.print(encoderCount);                            // count
+  Serial.print(",");
+  Serial.print(pwmCommand);                              // pwm
+  Serial.print(",");
+  Serial.print(motorForward ? "FWD" : "REV");            // direction
+  Serial.print(",");
+  Serial.print(setpointRPM, 1);                          // setpoint
+  Serial.print(",");
+  Serial.print(mode);                                    // mode
+  Serial.print(",");
+  Serial.print(error, 2);                                // PID error
+  Serial.print(",");
+  Serial.print(tempC * 9.0 / 5.0 + 32.0, 1);             // temp_f
+  Serial.print(",");
+  Serial.print(DUMMY_HUMIDITY, 1);                       // humidity (dummy)
+  Serial.print(",");
+  Serial.print(DUMMY_DHT_STATUS);                        // dht_status (dummy)
+  Serial.print(",");
+  Serial.print(ldrValue);                                // ldr_raw
+  Serial.print(",");
+  Serial.print(digitalRead(IR_PIN));                     // ir_raw
+  Serial.print(",");
+  Serial.print(obstacleDetected ? "YES" : "NO");         // obstacle
+  Serial.print(",");
+  Serial.print(DUMMY_SELECTED_SENSOR);                   // selected_sensor
+  Serial.print(",");
+  Serial.print(DUMMY_LOGIC_ENABLED);                     // logic_enabled
+  Serial.println();
 }
